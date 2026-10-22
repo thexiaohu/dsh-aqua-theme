@@ -1,8 +1,7 @@
 # Aqua installer for DeepSeek Harness 0.2.x
 #
-# Installs the Aqua glass theme into a DSH profile by doing exactly what the
-# DSH profile loader expects:
-#   1. put the package under $DSH_HOME/plugins/@deepseek-ai/dsh-client-ui-aqua
+# Registers the Aqua glass theme with a DSH profile:
+#   1. resolve the package source (local folder, or a fresh download if absent)
 #   2. junction it into <profile>/node_modules/@deepseek-ai/dsh-client-ui-aqua
 #   3. add it to <profile>/package.json -> dependencies
 #   4. add it to <profile>/package.json -> dsh.profile.bundles
@@ -11,8 +10,12 @@
 # loadProfileDirectory). Writing cordis.patch.yml alone does NOT work: the
 # loader reads package.json first and fails when it is missing.
 #
+# IMPORTANT: an existing install is NEVER overwritten. If the package is already
+# present locally, that copy is linked as-is, so local edits to lib/client.js
+# survive re-running this script. Pass -Force to re-download on purpose.
+#
 # Usage (from any directory):
-#   powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest 'https://github.com/thexiaohu/dsh-aqua-theme/raw/main/install.ps1' -OutFile install.ps1; .\install.ps1"
+#   powershell -ExecutionPolicy Bypass -File .\install.ps1
 #
 # Options:
 #   -Source   repo URL, or a local folder path (junction link, live reload)
@@ -20,6 +23,7 @@
 #   -DshHome  DSH home, defaults to $env:DSH_HOME or %USERPROFILE%\.dsh
 #   -Profile  profile name; defaults to 'desktop' (the Electron desktop app).
 #             Use 'web' for the browser-only build.
+#   -Force    re-download even when a local copy already exists
 #
 # Re-running is safe (idempotent).
 
@@ -27,7 +31,8 @@ param(
     [string]$Source = 'https://github.com/thexiaohu/dsh-aqua-theme',
     [string]$Version = 'latest',
     [string]$DshHome = $env:DSH_HOME,
-    [string]$Profile = 'desktop'
+    [string]$Profile = 'desktop',
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -55,9 +60,17 @@ if (-not (Test-Path $profileDir)) {
 }
 
 # ---------- 1. source ----------
-Write-Host '[1/4] Getting plugin source...' -ForegroundColor Cyan
+Write-Host '[1/4] Resolving plugin source...' -ForegroundColor Cyan
 $isRemote = $Source -match '^(https?://|git@|ssh://|github:)'
-if ($isRemote) {
+
+$localCopyOk = (Test-Path (Join-Path $installDir 'lib\client.js')) -and
+               (Test-Path (Join-Path $installDir 'package.json'))
+
+if ($localCopyOk -and -not $Force) {
+    # Existing install wins -- never clobber the user's edits.
+    Write-Host "  using the existing copy at $installDir (no download, edits preserved)"
+    $src = $installDir
+} elseif ($isRemote) {
     $repoUrl = $Source.TrimEnd('/') -replace '\.git$', ''
 
     # Resolve the ref: 'latest' -> newest release tag, else tag/branch as given.
@@ -94,6 +107,7 @@ if ($isRemote) {
         Expand-Archive $zipFile -DestinationPath $extractDir -Force
         $inner = Get-ChildItem $extractDir -Directory | Select-Object -First 1
         if (-not $inner) { throw "zip contains no package directory: $zipUrl" }
+        # Only reached when there was no local copy, or -Force was passed.
         if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
         New-Item -ItemType Directory -Force -Path (Split-Path $installDir -Parent) | Out-Null
         Move-Item $inner.FullName $installDir
