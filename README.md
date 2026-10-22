@@ -1,8 +1,40 @@
-# dsh-client-ui-aqua
+# dsh-aqua-theme
 
 **玻璃质感主题（glassmorphism）for DeepSeek Harness。**
 
 把顶栏、侧栏、输入框、统计行全部变成磨砂玻璃片，背景叠加粒子鲸鱼、鱼群、网格光点与光标辉光。关掉开关即完全还原原生界面，不改 DSH 任何源码。
+
+---
+
+## 📦 安装
+
+### 方式一：DSH 内直接安装（推荐）
+
+打开 **设置 → 插件 → 添加插件**，输入：
+
+```
+https://github.com/thexiaohu/dsh-aqua-theme
+```
+
+或输入包名（已发布到 npm 后）：
+
+```
+dsh-aqua-theme
+```
+
+安装后**完全退出 DSH 再启动**。
+
+### 方式二：脚本安装
+
+```powershell
+git clone https://github.com/thexiaohu/dsh-aqua-theme
+cd dsh-aqua-theme
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+浏览器版加 `-Profile web`。
+
+脚本**不会覆盖已有安装**：本地已存在时直接复用，保留你的修改。需要重新下载加 `-Force`。
 
 ---
 
@@ -14,24 +46,6 @@
 - **背景双来源** — 渐变背景（色调 + 强度可调）或自定义壁纸（图片 / 视频）
 - **配色自由** — 大鱼、中小鱼各一组品牌色 + RGB 圆盘取色器
 - **一键开关** — 关闭即完全还原原生界面，无残留
-
----
-
-## 📦 安装
-
-```powershell
-# 桌面版（Electron）
-.\install.ps1
-
-# 浏览器版
-.\install.ps1 -Profile web
-```
-
-脚本会：拉取源码 → 链接到 profile → 注册到 `package.json` → 校验。
-
-**手动安装**：把本目录链接到 `<profile>/node_modules/@deepseek-ai/dsh-client-ui-aqua`，并在 profile 的 `package.json` 里加入 `dependencies` 与 `dsh.profile.bundles`。
-
-安装后**完全退出 DSH 再启动**。
 
 ---
 

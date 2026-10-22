@@ -41,7 +41,7 @@ $ErrorActionPreference = 'Stop'
 if (-not $DshHome) { $DshHome = Join-Path $env:USERPROFILE '.dsh' }
 if (-not (Test-Path $DshHome)) { throw "DSH home not found: $DshHome (override with -DshHome)" }
 
-$pluginName  = '@deepseek-ai/dsh-client-ui-aqua'
+$pluginName  = 'dsh-aqua-theme'
 $profilesDir = Join-Path $DshHome 'profiles'
 $profileDir  = Join-Path $profilesDir $Profile
 $nodeModules = Join-Path $profileDir 'node_modules'
