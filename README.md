@@ -125,4 +125,4 @@ AGPL-3.0。基于以下项目改编：
 - **acdsh4869** — DSH 适配（`dsh-aqua-theme`）
 - **thexiaohu** — 清理版与后续增强
 
-> `lib/` 是构建产物，`src/` 是上游 TypeScript 源码。修改需改 `lib/`，重新构建会覆盖。
+> 运行时只加载 `lib/client.js`，仓库不再附带构建源码。

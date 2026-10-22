@@ -1,13 +1,46 @@
 # Changelog
 
-## main（未发布）
+## 2.1.0
 
-- **修复：兼容模式下半屏被磨砂。** 兼容模式的通用玻璃规则给 `[class*='panel']` 加了 `backdrop-filter`，而 0.2.x 里 `panel` 类片段命名的是整栏大容器（聊天主面板、设置面板、侧栏面板），导致半边屏幕整体模糊。已从选择器中移除 `panel`（保留 menu/tooltip/card/bubble/popover/dropdown 小件）。
-- **新增：「恢复默认效果」一键按钮。** 通用设置 → 外观 → 玻璃效果组内新增按钮，单击把全部调节项（模式/模糊/磨砂/色调/深浅/亮度/壁纸及视频壁纸参数/装饰开关）恢复到出厂默认（`SETTINGS_DEFAULTS`，保留开关状态），并清理被替换掉的视频壁纸存储。
-- **修复：0.2.x 主区域/侧栏面板不透明底色盖住流体背景。** 0.2.x 的布局包（`dsh-client-ui-layout`）把基础底色从原来的 frame+phase 两层改为画在独立的布局列上（`centerCol`/`rightbarCol`），新装的两块侧栏面板（浏览器预览 `dsh-client-ui-sidebar-browser`、文档预览 `dsh-client-ui-sidebar-documentpreview`）的 frame 根节点也各自自绘不透明底色——主题原有的 `[data-phase]`/`[data-dsh-frame]` 透明化规则盖不到它们，主区域因此呈纯白平板。主题样式现补充：`[class*='centerCol']`、`[class*='rightbarCol']` 与侧栏列内 `[class$='_frame']` 全部置为透明（类片段锚点，不受哈希前缀影响），流体背景可透至主区域与侧栏面板。
-- **修复：主题样式表缺失导致启动闪烁 + 玻璃效果不完整。** tsdown/rolldown 会把「纯副作用、无 JS 消费」的 CSS 导入（`aqua.module.css` 全局主题与 `fonts.module.css` 字体表）整棵摇掉，`lib/style.css` 里只剩设置卡片的 CSS module 类；插件因此只有 `overrideTokens` 的换色在生效，玻璃面板、背景流体、字体全部缺失，且应用启动时背景发生一次硬切闪烁。`scripts/wrap-client.mjs` 现在直接从 `src/client/` 读取这两个文件与 `lib/style.css` 一起内联进 `lib/client.js`（产物约 244KB，含 11 个 `@keyframes`、3 个 `@font-face`、111 个属性选择器、23 处 `backdrop-filter`）。同时：
-  - 新增 `dsh-aqua-boot-in` 一次性 0.6s 淡入动画（流体背景板与壁纸层），把启动首帧的突跳变为平滑过渡。
-  - `mountFluid()` 增加重入保护，防止重复挂载时泄漏 WebGL 上下文并叠加两个 shader（另一处潜在闪烁源）。
+### 可直接在 DSH 内安装
+
+包名由 `@deepseek-ai/dsh-client-ui-aqua` 改为无作用域的 `dsh-aqua-theme`。原
+名属于官方作用域，无法发布到 npm，插件管理器按该名加载时又找不到已改名的目录，
+于是报 `loaded without registering ...`。同步更新了 `package.json`、
+`cordis.patch.yml`、`install.ps1` 与 `lib/client.js` 内的模块 id。安装方式：
+
+- 设置 → 插件 → 添加插件 → `https://github.com/thexiaohu/dsh-aqua-theme`
+- 或 `install.ps1`（本地已存在时直接复用，不覆盖改动，需要重新下载加 `-Force`）
+
+仓库只保留运行时文件（`lib/` + 元数据），删去 `src/`、构建配置、`scripts/`、
+类型声明与截图，约从 3MB 精简到 360KB。改动直接编辑 `lib/client.js`。
+
+### 层级重排
+
+插件自有层从 0 往上重排，宿主元素保持原值（顶栏/输入框/统计行 8、侧栏 9）：
+
+    0  环境背景（渐变）        1  鱼群 / 鲸鱼 / 网格      2  壁纸
+    3  光标辉光                7  边缘渐隐（宿主原值）     8/9 玻璃栏（宿主原值）
+
+「鱼显示在上层」把鱼群层从 1 抬到 10（越过玻璃栏），其余层不受影响。
+
+### 修复
+
+- 暗色模式看不到鱼：环境层原在 `z-index:-1`，位于 `<body>` 底色之下；暗色底是
+  62% 不透明深色，把鱼完全盖住（亮色是 55% 半透明尚能透出）。移到 `0` 解决。
+- 删除亮度遮罩：它的滑块从未接进面板，`--dsh-aqua-brightness-*` 恒为 0，
+  `::after` 覆盖层永久透明。连同 `bgBrightness` 设置项一并移除。
+- 发送键闪烁：按钮不再叠加额外 hover 高光，宿主本就有自己的 hover 样式。
+- 顶栏底部残留灰线：宿主分隔线独立绘制，现显式去掉 header 的 border-bottom。
+- 鱼群盖住会话文字：会话面板提升，位于鱼群之上。
+
+### 新增
+
+- 背景渐变双滑块：色调（0–360°）与强度（0–200%），明暗各有配色。
+- 壁纸功能完整恢复：背景来源切换、图片/视频选择、清除，图片配模糊度/磨砂度、
+  视频配模糊度/亮度。视频存 IndexedDB，Chromium 下 File System Access 记住授权。
+- 鱼尺寸改为上下限区间，每条鱼在区间内随机取尺寸；大鱼固定 1 条 = 上限 × 1.6。
+- 小鱼数量上限提升到 80。
 
 ## 2.0.0-rc.1（适配 DSH v0.2.x / 桌面端 v0.22.3+）
 
