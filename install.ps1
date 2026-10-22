@@ -1,32 +1,33 @@
-# Aqua installer (Windows) for the v0.2.x-adapted package (v2.0.0-rc.1).
+# Aqua installer for DeepSeek Harness 0.2.x
 #
-# NOTE: `dsh plugin --profile web add dsh-client-ui-aqua` currently pulls the
-# OLD npm release that is not adapted to DSH v0.2.x — use this script with a
-# local source folder (-Source) or a GitHub ref of the adapted repo instead.
+# Installs the Aqua glass theme into a DSH profile by doing exactly what the
+# DSH profile loader expects:
+#   1. put the package under $DSH_HOME/plugins/@deepseek-ai/dsh-client-ui-aqua
+#   2. junction it into <profile>/node_modules/@deepseek-ai/dsh-client-ui-aqua
+#   3. add it to <profile>/package.json -> dependencies
+#   4. add it to <profile>/package.json -> dsh.profile.bundles
 #
-# This script needs no npm and no git (zip download fallback).
+# Steps 3-4 are what the loader actually reads (dsh-app-boot's
+# loadProfileDirectory). Writing cordis.patch.yml alone does NOT work: the
+# loader reads package.json first and fails when it is missing.
 #
-# One command (from any directory):
+# Usage (from any directory):
 #   powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest 'https://github.com/thexiaohu/dsh-aqua-theme/raw/main/install.ps1' -OutFile install.ps1; .\install.ps1"
 #
-# It does three things:
-#   1. get the repo (git clone, or plain zip download when git is missing)
-#   2. create a junction in the profile's node_modules
-#   3. register ui-aqua in cordis.patch.yml (idempotent - safe to re-run)
+# Options:
+#   -Source   repo URL, or a local folder path (junction link, live reload)
+#   -Version  'latest' (newest GitHub Release, falls back to main), a tag, or a branch
+#   -DshHome  DSH home, defaults to $env:DSH_HOME or %USERPROFILE%\.dsh
+#   -Profile  profile name; defaults to 'desktop' (the Electron desktop app).
+#             Use 'web' for the browser-only build.
 #
-# Version: defaults to 'latest' (the newest GitHub Release, resolved via the
-# API). Pin a version with -Version 'v1.0.1', or track the dev branch with
-# -Version 'main'. Reload the Web UI afterwards. DSH home defaults to
-# %USERPROFILE%\.dsh, override with -DshHome. Repo defaults to the official
-# one; pass a URL or local path to install another clone.
+# Re-running is safe (idempotent).
 
 param(
-    # Default to the adapted fork; pass a local folder path via -Source to
-    # install from disk (junction link, live reload of edits).
     [string]$Source = 'https://github.com/thexiaohu/dsh-aqua-theme',
     [string]$Version = 'latest',
     [string]$DshHome = $env:DSH_HOME,
-    [string]$Profile = 'web'
+    [string]$Profile = 'desktop'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -35,23 +36,31 @@ $ErrorActionPreference = 'Stop'
 if (-not $DshHome) { $DshHome = Join-Path $env:USERPROFILE '.dsh' }
 if (-not (Test-Path $DshHome)) { throw "DSH home not found: $DshHome (override with -DshHome)" }
 
-$plugin      = '@deepseek-ai/dsh-client-ui-aqua'
-$nodeModules = Join-Path $DshHome 'profiles\node_modules'
-$linkPath    = Join-Path $nodeModules $plugin
-$patchFile   = Join-Path $DshHome "profiles\$Profile\cordis.patch.yml"
-# Persistent plugin location: %TEMP% can be wiped on reboot / disk cleanup,
-# which would leave the junction dangling and break the next boot.
+$pluginName  = '@deepseek-ai/dsh-client-ui-aqua'
+$profilesDir = Join-Path $DshHome 'profiles'
+$profileDir  = Join-Path $profilesDir $Profile
+$nodeModules = Join-Path $profileDir 'node_modules'
+$linkPath    = Join-Path $nodeModules $pluginName
 $pluginsDir  = Join-Path $DshHome 'plugins'
-$cloneDir    = Join-Path $pluginsDir $plugin
+$installDir  = Join-Path $pluginsDir $pluginName
+$manifestPath = Join-Path $profileDir 'package.json'
+
+# ---------- 0. sanity ----------
+if (-not (Test-Path $profileDir)) {
+    $available = @()
+    if (Test-Path $profilesDir) {
+        $available = Get-ChildItem $profilesDir -Directory | Select-Object -ExpandProperty Name
+    }
+    throw "Profile '$Profile' not found at $profileDir. Available profiles: $($available -join ', '). Pass -Profile <name>."
+}
 
 # ---------- 1. source ----------
-Write-Host '[1/3] Getting plugin source...' -ForegroundColor Cyan
+Write-Host '[1/4] Getting plugin source...' -ForegroundColor Cyan
 $isRemote = $Source -match '^(https?://|git@|ssh://|github:)'
 if ($isRemote) {
-    $repoUrl = $Source.TrimEnd('/').TrimEnd('.git')
+    $repoUrl = $Source.TrimEnd('/') -replace '\.git$', ''
 
-    # Resolve the ref: 'latest' -> the newest release tag via the GitHub API;
-    # a version-looking string (v1.2.3) is a tag; anything else is a branch.
+    # Resolve the ref: 'latest' -> newest release tag, else tag/branch as given.
     $ref = $Version
     $isTag = $ref -match '^v\d+\.\d+'
     if ($ref -eq 'latest' -and $repoUrl -match '^https?://github\.com/([^/]+/[^/]+)') {
@@ -61,20 +70,19 @@ if ($isRemote) {
             if ($latest.tag_name) {
                 $ref = $latest.tag_name
                 $isTag = $true
-                Write-Host "  最新版本: $ref" -ForegroundColor Cyan
+                Write-Host "  latest release: $ref"
             }
         } catch {
-            Write-Host '  (查询最新版本失败，回退到 main 分支)' -ForegroundColor Yellow
+            Write-Host '  (no release found, using the main branch)'
             $ref = 'main'
             $isTag = $false
         }
     }
 
-    # Zip first: plain HTTP is faster and more reliable than the git protocol
-    # (the latter often stalls on flaky connections). git is only a fallback.
-    $refKind  = if ($isTag) { 'tags' } else { 'heads' }
-    $zipUrl   = "$repoUrl/archive/refs/$refKind/$ref.zip"
-    $zipFile  = Join-Path $pluginsDir 'aqua-plugin.zip'
+    # Zip first (plain HTTP is more reliable than the git protocol), git as fallback.
+    $refKind    = if ($isTag) { 'tags' } else { 'heads' }
+    $zipUrl     = "$repoUrl/archive/refs/$refKind/$ref.zip"
+    $zipFile    = Join-Path $pluginsDir 'aqua-plugin.zip'
     $extractDir = Join-Path $pluginsDir 'aqua-plugin-extract'
     New-Item -ItemType Directory -Force -Path $pluginsDir | Out-Null
 
@@ -86,40 +94,44 @@ if ($isRemote) {
         Expand-Archive $zipFile -DestinationPath $extractDir -Force
         $inner = Get-ChildItem $extractDir -Directory | Select-Object -First 1
         if (-not $inner) { throw "zip contains no package directory: $zipUrl" }
-        if (Test-Path $cloneDir) { Remove-Item $cloneDir -Recurse -Force }
-        # The plugin name is scoped (@deepseek-ai/...), so create the parent
-        # level too - Move-Item cannot create multi-level destination paths.
-        New-Item -ItemType Directory -Force -Path (Split-Path $cloneDir -Parent) | Out-Null
-        Move-Item $inner.FullName $cloneDir
+        if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
+        New-Item -ItemType Directory -Force -Path (Split-Path $installDir -Parent) | Out-Null
+        Move-Item $inner.FullName $installDir
         Remove-Item $zipFile -Force
+        Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue
         $gotSource = $true
     } catch {
         Write-Host '  zip download failed, trying git clone...' -ForegroundColor Yellow
     }
 
     if (-not $gotSource) {
-        $useGit = $null -ne (Get-Command git -ErrorAction SilentlyContinue)
-        if (-not $useGit) { throw 'download failed (zip and git both unavailable)' }
-        if (Test-Path $cloneDir) { Remove-Item $cloneDir -Recurse -Force }
-        git clone --depth 1 --branch $ref $repoUrl $cloneDir | Out-Host
+        if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+            throw 'download failed: zip unavailable and git is not installed'
+        }
+        if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
+        git clone --depth 1 --branch $ref $repoUrl $installDir | Out-Host
         if ($LASTEXITCODE -ne 0) { throw "git clone failed for $repoUrl ($ref)" }
     }
-    $src = $cloneDir
+    $src = $installDir
 } else {
     $src = (Resolve-Path $Source).Path
 }
+
 if (-not (Test-Path (Join-Path $src 'lib\client.js'))) {
-    throw "lib\client.js not found - the repo must include the pre-built bundle. dir: $src"
+    throw "lib\client.js not found in '$src' - the package must include the pre-built bundle."
+}
+if (-not (Test-Path (Join-Path $src 'package.json'))) {
+    throw "package.json not found in '$src'."
 }
 
 # ---------- 2. junction ----------
-Write-Host "[2/3] Linking -> $linkPath" -ForegroundColor Cyan
+Write-Host "[2/4] Linking -> $linkPath" -ForegroundColor Cyan
 New-Item -ItemType Directory -Force -Path $nodeModules | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path $linkPath -Parent) | Out-Null
 if (Test-Path $linkPath) {
     $item = Get-Item $linkPath -Force
     if ($item.LinkType) {
-        # Delete the junction itself, never its target (-Recurse would follow it).
+        # Delete the link itself, never its target.
         [System.IO.Directory]::Delete($linkPath)
     } else {
         Remove-Item $linkPath -Force -Recurse
@@ -128,27 +140,106 @@ if (Test-Path $linkPath) {
 New-Item -ItemType Junction -Path $linkPath -Target $src | Out-Null
 if (-not (Test-Path $linkPath)) { throw 'junction creation failed' }
 
-# ---------- 3. register ----------
-Write-Host "[3/3] Registering in $patchFile" -ForegroundColor Cyan
-$entryText = @'
-- insert:
-    - id: ui-aqua
-      name: '@deepseek-ai/dsh-client-ui-aqua'
-'@
-if (-not (Test-Path $patchFile)) {
-    Set-Content -Path $patchFile -Value ($entryText + "`n") -Encoding UTF8
+# ---------- 3. package.json: dependencies + dsh.profile.bundles ----------
+Write-Host "[3/4] Registering in $manifestPath" -ForegroundColor Cyan
+if (-not (Test-Path $manifestPath)) {
+    throw "profile manifest missing: $manifestPath (this profile was never initialised by DSH)"
+}
+$raw = Get-Content $manifestPath -Raw
+try { $manifest = $raw | ConvertFrom-Json } catch { throw "cannot parse $manifestPath : $($_.Exception.Message)" }
+
+# dependency spec: relative link keeps the package outside the profile
+$depSpec = "link:../../plugins/$pluginName"
+
+$deps = $manifest.dependencies
+if ($null -eq $deps) {
+    $manifest | Add-Member -NotePropertyName dependencies -NotePropertyValue ([pscustomobject]@{}) -Force
+    $deps = $manifest.dependencies
+}
+$existingDep = $deps.PSObject.Properties[$pluginName]
+if ($existingDep) {
+    Write-Host "  dependency already present: $($existingDep.Value)"
 } else {
-    $content = Get-Content $patchFile -Raw
-    # Match the real list entry only, not the "duplicate loader entry id: ui-aqua" comment.
-    if ($content -match '(?m)^\s*-\s+id:\s*ui-aqua\s*$') {
-        Write-Host '  already registered, skip.' -ForegroundColor DarkGray
-    } else {
-        $base = ($content -replace '(?s)\[\s*\]\s*$', '').TrimEnd()
-        if ($base -eq '') { $new = $entryText + "`n" } else { $new = $base + "`n`n" + $entryText + "`n" }
-        Set-Content -Path $patchFile -Value $new -Encoding UTF8
+    $deps | Add-Member -NotePropertyName $pluginName -NotePropertyValue $depSpec -Force
+    Write-Host "  added dependency: $depSpec"
+}
+
+# bundles list
+if ($null -eq $manifest.dsh) {
+    $manifest | Add-Member -NotePropertyName dsh -NotePropertyValue ([pscustomobject]@{}) -Force
+}
+if ($null -eq $manifest.dsh.profile) {
+    $manifest.dsh | Add-Member -NotePropertyName profile -NotePropertyValue ([pscustomobject]@{}) -Force
+}
+$bundles = @($manifest.dsh.profile.bundles | Where-Object { $_ })
+if ($bundles -contains $pluginName) {
+    Write-Host '  bundle already listed'
+} else {
+    $bundles = @($bundles) + $pluginName
+    $manifest.dsh.profile | Add-Member -NotePropertyName bundles -NotePropertyValue $bundles -Force
+    Write-Host "  added to dsh.profile.bundles (now $($bundles.Count) entries)"
+}
+
+# Write back the way DSH does it: JSON.stringify(value, null, 2).
+# PowerShell's ConvertTo-Json uses its own spacing (and pads with runs of
+# spaces), so the manifest is re-serialised by a tiny JS helper through node
+# when available, and reformatted in-place otherwise.
+function Format-Json2Space([string]$json) {
+    $out = New-Object System.Text.StringBuilder
+    $indent = 0
+    $inString = $false
+    $escaped = $false
+    for ($i = 0; $i -lt $json.Length; $i++) {
+        $ch = $json[$i]
+        if ($inString) {
+            [void]$out.Append($ch)
+            if ($escaped) { $escaped = $false }
+            elseif ($ch -eq '\') { $escaped = $true }
+            elseif ($ch -eq '"') { $inString = $false }
+            continue
+        }
+        switch ($ch) {
+            '"' { $inString = $true; [void]$out.Append($ch) }
+            '{' { [void]$out.Append("{"); $indent++; [void]$out.Append("`n" + (' ' * ($indent * 2))) }
+            '[' { [void]$out.Append("["); $indent++; [void]$out.Append("`n" + (' ' * ($indent * 2))) }
+            '}' {
+                $indent--
+                [void]$out.Append("`n" + (' ' * ($indent * 2)) + "}")
+            }
+            ']' {
+                $indent--
+                [void]$out.Append("`n" + (' ' * ($indent * 2)) + "]")
+            }
+            ',' { [void]$out.Append(","); [void]$out.Append("`n" + (' ' * ($indent * 2))) }
+            ':' { [void]$out.Append(": ") }
+            default {
+                if (-not [char]::IsWhiteSpace($ch)) { [void]$out.Append($ch) }
+            }
+        }
     }
+    return $out.ToString()
+}
+
+$json = Format-Json2Space (($manifest | ConvertTo-Json -Depth 20 -Compress))
+[System.IO.File]::WriteAllText($manifestPath, $json + "`n", (New-Object System.Text.UTF8Encoding $false))
+
+# ---------- 4. verify ----------
+Write-Host '[4/4] Verifying...' -ForegroundColor Cyan
+$check = Get-Content $manifestPath -Raw | ConvertFrom-Json
+$okDep = $null -ne $check.dependencies.PSObject.Properties[$pluginName]
+$okBundle = @($check.dsh.profile.bundles) -contains $pluginName
+$okLink = Test-Path $linkPath
+$okBundleFile = Test-Path (Join-Path $linkPath 'lib\client.js')
+
+if (-not ($okDep -and $okBundle -and $okLink -and $okBundleFile)) {
+    throw "verification failed: dependency=$okDep bundle=$okBundle link=$okLink client.js=$okBundleFile"
 }
 
 Write-Host ''
-Write-Host 'Done. Reload the Web UI (Aqua is on by default; Settings -> Plugins -> Aqua to toggle).' -ForegroundColor Green
-Write-Host 'If the plugin does not appear after reload, restart the dsh web process.' -ForegroundColor Yellow
+Write-Host 'Installed.' -ForegroundColor Green
+Write-Host "  package : $src"
+Write-Host "  link    : $linkPath"
+Write-Host "  profile : $profileDir"
+Write-Host ''
+Write-Host 'Restart DSH (fully quit and relaunch), then open Settings -> General -> Appearance.' -ForegroundColor Yellow
+Write-Host 'Aqua is on by default; the theme controls sit under "Theme settings".'

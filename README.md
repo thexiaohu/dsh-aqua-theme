@@ -91,58 +91,117 @@
 ### 前提
 
 - DeepSeek Harness **`0.2.0-rc.2`** 或更高（桌面端 v0.22.3+）
-- Node.js 18+（仅重新构建时需要）
+- 已至少启动过一次 DSH（profile 目录已初始化）
 
-### 方式一：本地文件夹安装（推荐）
+### 重要：profile 名称
 
-1. 下载或 clone 本仓库到本地：
+DSH 的 profile 决定插件装到哪里。请先确认你的 profile：
 
-```sh
-git clone https://github.com/thexiaohu/dsh-aqua-theme.git
-```
+| 你用的版本 | profile 名称 |
+|---|---|
+| **桌面版**（Electron 应用） | `desktop` ← 脚本默认 |
+| 浏览器版（`dsh web`） | `web` |
 
-2. 运行安装脚本：
+不确定的话，看一眼 `%USERPROFILE%\.dsh\profiles\` 下的目录名。
 
-```powershell
-powershell -ExecutionPolicy Bypass -Command ".\install.ps1 -Source '你的绝对路径\dsh-aqua-theme' -Profile web"
-```
+### 方式一：一键脚本（推荐）
 
-3. **刷新 Web 界面**即可生效。
-
-本地路径会建立 **junction 软链**，之后修改代码或重建会直接反映到 DSH，无需重装。
-
-### 方式二：手动安装（macOS / Linux）
-
-```sh
-git clone https://github.com/thexiaohu/dsh-aqua-theme.git
-
-# 建立软链
-ln -s "$PWD/dsh-aqua-theme" "$DSH_HOME/profiles/node_modules/@deepseek-ai/dsh-client-ui-aqua"
-```
-
-再往 `$DSH_HOME/profiles/web/cordis.patch.yml` 追加：
-
-```yaml
-- insert:
-    - id: ui-aqua
-      name: '@deepseek-ai/dsh-client-ui-aqua'
-```
-
-刷新 Web 界面。
-
-### 方式三：Windows 手动安装
+**桌面版**（默认 `-Profile desktop`）：
 
 ```powershell
-# 1. 建立 junction
-New-Item -ItemType Junction `
-  -Path "$env:USERPROFILE\.dsh\profiles\node_modules\@deepseek-ai\dsh-client-ui-aqua" `
-  -Target "你的绝对路径\dsh-aqua-theme"
-
-# 2. 编辑 %USERPROFILE%\.dsh\profiles\web\cordis.patch.yml，追加：
-#    - insert:
-#        - id: ui-aqua
-#          name: '@deepseek-ai/dsh-client-ui-aqua'
+irm https://github.com/thexiaohu/dsh-aqua-theme/raw/main/install.ps1 -OutFile install.ps1
+.\install.ps1
 ```
+
+**浏览器版**，加 `-Profile web`：
+
+```powershell
+.\install.ps1 -Profile web
+```
+
+**从本地文件夹安装**（可实时改代码）：
+
+```powershell
+.\install.ps1 -Source '你的绝对路径\dsh-aqua-theme'
+```
+
+脚本会做四件事，且**重复运行安全**：
+
+1. 从 GitHub 下载最新版（无 Release 时用 `main` 分支）
+2. 把包放到 `%USERPROFILE%\.dsh\plugins\@deepseek-ai\dsh-client-ui-aqua`
+3. 在 profile 的 `node_modules` 里建 junction 软链
+4. 把插件登记进 profile 的 `package.json`：
+   - `dependencies` 加 `link:../../plugins/@deepseek-ai/dsh-client-ui-aqua`
+   - `dsh.profile.bundles` 加入 `@deepseek-ai/dsh-client-ui-aqua`
+
+> **为什么不用 `cordis.patch.yml`？**
+> DSH 的加载器（`dsh-app-boot` 的 `loadProfileDirectory`）第一步读 profile 的
+> `package.json`，取 `dsh.profile.bundles` 列表，然后才应用 `cordis.patch.yml`
+> 作为用户层。只写 patch 文件、不改 `package.json`，插件不会被加载。
+
+### 方式二：手动安装
+
+**Windows（PowerShell）：**
+
+```powershell
+$plugin = "$env:USERPROFILE\.dsh\plugins\@deepseek-ai\dsh-client-ui-aqua"
+$profile = "$env:USERPROFILE\.dsh\profiles\desktop"   # 浏览器版改成 web
+
+# 1. 下载包
+git clone https://github.com/thexiaohu/dsh-aqua-theme.git $plugin
+
+# 2. 建软链
+New-Item -ItemType Junction -Force `
+  -Path "$profile\node_modules\@deepseek-ai\dsh-client-ui-aqua" `
+  -Target $plugin
+
+# 3. 登记到 package.json（手动编辑，加两处）
+#    dependencies 里加：  "@deepseek-ai/dsh-client-ui-aqua": "link:../../plugins/@deepseek-ai/dsh-client-ui-aqua"
+#    dsh.profile.bundles 里加：  "@deepseek-ai/dsh-client-ui-aqua"
+```
+
+**macOS / Linux：**
+
+```sh
+export DSH_HOME="$HOME/.dsh"
+PROFILE=desktop    # 浏览器版改成 web
+
+git clone https://github.com/thexiaohu/dsh-aqua-theme.git \
+  "$DSH_HOME/plugins/@deepseek-ai/dsh-client-ui-aqua"
+
+mkdir -p "$DSH_HOME/profiles/$PROFILE/node_modules/@deepseek-ai"
+ln -s "$DSH_HOME/plugins/@deepseek-ai/dsh-client-ui-aqua" \
+      "$DSH_HOME/profiles/$PROFILE/node_modules/@deepseek-ai/dsh-client-ui-aqua"
+```
+
+再手动编辑 `$DSH_HOME/profiles/$PROFILE/package.json`，加两处：
+
+```json
+{
+  "dependencies": {
+    "@deepseek-ai/dsh-client-ui-aqua": "link:../../plugins/@deepseek-ai/dsh-client-ui-aqua"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "@deepseek-ai/dsh-client-ui-aqua"
+      ]
+    }
+  }
+}
+```
+
+### 安装后
+
+**完全退出 DSH 再重新启动**（不是刷新页面）。然后打开：
+
+**设置 → 通用设置 → 外观**，在「主题设置」下能看到全部控件。
+
+如果没出现，检查：
+- `profiles\<你的profile>\package.json` 里 `dsh.profile.bundles` 是否包含该插件
+- `profiles\<你的profile>\node_modules\@deepseek-ai\dsh-client-ui-aqua\lib\client.js` 是否存在
 
 ## 使用
 
